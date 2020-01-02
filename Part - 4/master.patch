@@ -1,0 +1,215 @@
+diff --git a/Part - 4/movie-bag/master.patch b/Part - 4/movie-bag/master.patch
+deleted file mode 100644
+index fa2b7aa..0000000
+--- a/Part - 4/movie-bag/master.patch	
++++ /dev/null
+@@ -1,149 +0,0 @@
+-diff --git a/Part - 4/Part-4 Exception Handling.md b/Part - 4/Part-4 Exception Handling.md
+-index 90af64f..c1a1c15 100644
+---- a/Part - 4/Part-4 Exception Handling.md	
+-+++ b/Part - 4/Part-4 Exception Handling.md	
+-@@ -82,10 +82,27 @@ As you can see firs we have extended the `Exception` class to create different c
+- Update `app.py` to import recently created `errors` dictionary and add this as a parameter to `Api` class.
+- 
+- ```diff
+--#~/movie-bag/app.y
+-+#~/movie-bag/app.py
+-+
+-+from database.db import initialize_db
+-+ from flask_restful import Api
+-+ from resources.routes import initialize_routes
+-++from resources.errors import errors
+-+ 
+-+ app = Flask(__name__)
+-+ app.config.from_envvar('ENV_FILE_LOCATION')
+-+ 
+-+-api = Api(app)
+-++api = Api(app, errors=errors)
+-+ bcrypt = Bcrypt(app)
+-+ jwt = JWTManager(app)
+-+
+-+```
+-+
+-+Finally, we are ready to perform some exception handling in our application.
+-+
+- 
+- 
+- 
+--```
+- 
+- Until then happy coding 😊
+-\ No newline at end of file
+-diff --git a/Part - 4/movie-bag/app.py b/Part - 4/movie-bag/app.py
+-index 04fa601..8281ddd 100644
+---- a/Part - 4/movie-bag/app.py	
+-+++ b/Part - 4/movie-bag/app.py	
+-@@ -5,11 +5,12 @@ from flask_jwt_extended import JWTManager
+- from database.db import initialize_db
+- from flask_restful import Api
+- from resources.routes import initialize_routes
+-+from resources.errors import errors
+- 
+- app = Flask(__name__)
+- app.config.from_envvar('ENV_FILE_LOCATION')
+- 
+--api = Api(app)
+-+api = Api(app, errors=errors)
+- bcrypt = Bcrypt(app)
+- jwt = JWTManager(app)
+- 
+-diff --git a/Part - 4/movie-bag/resources/movie.py b/Part - 4/movie-bag/resources/movie.py
+-index d0ecec9..a63a299 100644
+---- a/Part - 4/movie-bag/resources/movie.py	
+-+++ b/Part - 4/movie-bag/resources/movie.py	
+-@@ -1,7 +1,11 @@
+- from flask import Response, request
+- from database.models import Movie, User
+- from flask_jwt_extended import jwt_required, get_jwt_identity
+--from flask_restful import Resource
+-+from flask_restful import Resource, reqparse
+-+from mongoengine.errors import FieldDoesNotExist, NotUniqueError, DoesNotExist, ValidationError, InvalidQueryError
+-+from resources.errors import SchemaValidationError, MovieAlreadyExistsError, InternalServerError, \
+-+UpdatingMovieError, DeletingMovieError, MovieNotExistsError
+-+
+- 
+- class MoviesApi(Resource):
+-     def get(self):
+-@@ -11,32 +15,57 @@ class MoviesApi(Resource):
+- 
+-     @jwt_required
+-     def post(self):
+--        user_id = get_jwt_identity()
+--        body = request.get_json()
+--        user = User.objects.get(id=user_id)
+--        movie =  Movie(**body, added_by=user)
+--        movie.save()
+--        user.update(push__movies=movie)
+--        user.save()
+--        id = movie.id
+--        return {'id': str(id)}, 200
+--        
+-+        try:
+-+            user_id = get_jwt_identity()
+-+            body = request.get_json()
+-+            user = User.objects.get(id=user_id)
+-+            movie =  Movie(**body, added_by=user)
+-+            movie.save()
+-+            user.update(push__movies=movie)
+-+            user.save()
+-+            id = movie.id
+-+            return {'id': str(id)}, 200
+-+        except (FieldDoesNotExist, ValidationError):
+-+            raise SchemaValidationError
+-+        except NotUniqueError:
+-+            raise MovieAlreadyExistsError
+-+        except Exception as e:
+-+            raise InternalServerError
+-+
+-+
+- class MovieApi(Resource):
+-     @jwt_required
+-     def put(self, id):
+--        user_id = get_jwt_identity()
+--        movie = Movie.objects.get(id=id, added_by=user_id)
+--        body = request.get_json()
+--        Movie.objects.get(id=id).update(**body)
+--        return '', 200
+-+        try:
+-+            user_id = get_jwt_identity()
+-+            movie = Movie.objects.get(id=id, added_by=user_id)
+-+            body = request.get_json()
+-+            Movie.objects.get(id=id).update(**body)
+-+            return '', 200
+-+        except InvalidQueryError:
+-+            raise SchemaValidationError
+-+        except DoesNotExist:
+-+            raise UpdatingMovieError
+-+        except Exception:
+-+            raise InternalServerError       
+-     
+-     @jwt_required
+-     def delete(self, id):
+--        user_id = get_jwt_identity()
+--        movie = Movie.objects.get(id=id, added_by=user_id)
+--        movie.delete()
+--        return '', 200
+-+        try:
+-+            user_id = get_jwt_identity()
+-+            movie = Movie.objects.get(id=id, added_by=user_id)
+-+            movie.delete()
+-+            return '', 200
+-+        except DoesNotExist:
+-+            raise DeletingMovieError
+-+        except Exception:
+-+            raise InternalServerError
+- 
+-     def get(self, id):
+--        movies = Movie.objects.get(id=id).to_json()
+--        return Response(movies, mimetype="application/json", status=200)
+-+        try:
+-+            movies = Movie.objects.get(id=id).to_json()
+-+            return Response(movies, mimetype="application/json", status=200)
+-+        except DoesNotExist:
+-+            raise MovieNotExistsError
+-+        except Exception:
+-+            raise InternalServerError
+diff --git a/Part - 4/movie-bag/resources/auth.py b/Part - 4/movie-bag/resources/auth.py
+index 128f9ab..99d09c8 100644
+--- a/Part - 4/movie-bag/resources/auth.py	
++++ b/Part - 4/movie-bag/resources/auth.py	
+@@ -3,24 +3,39 @@ from flask_jwt_extended import create_access_token
+ from database.models import User
+ from flask_restful import Resource
+ import datetime
++from mongoengine.errors import FieldDoesNotExist, NotUniqueError, DoesNotExist
++from resources.errors import SchemaValidationError, EmailAlreadyExistsError, UnauthorizedError, \
++InternalServerError
+ 
+ class SignupApi(Resource):
+     def post(self):
+-        body = request.get_json()
+-        user =  User(**body)
+-        user.hash_password()
+-        user.save()
+-        id = user.id
+-        return {'id': str(id)}, 200
++        try:
++            body = request.get_json()
++            user =  User(**body)
++            user.hash_password()
++            user.save()
++            id = user.id
++            return {'id': str(id)}, 200
++        except FieldDoesNotExist:
++            raise SchemaValidationError
++        except NotUniqueError:
++            raise EmailAlreadyExistsError
++        except Exception as e:
++            raise InternalServerError
+ 
+ class LoginApi(Resource):
+     def post(self):
+-        body = request.get_json()
+-        user = User.objects.get(email=body.get('email'))
+-        authorized = user.check_password(body.get('password'))
+-        if not authorized:
+-            return {'error': 'Email or password invalid'}, 401
++        try:
++            body = request.get_json()
++            user = User.objects.get(email=body.get('email'))
++            authorized = user.check_password(body.get('password'))
++            if not authorized:
++                raise UnauthorizedError
+ 
+-        expires = datetime.timedelta(days=7)
+-        access_token = create_access_token(identity=str(user.id), expires_delta=expires)
+-        return {'token': access_token}, 200
+\ No newline at end of file
++            expires = datetime.timedelta(days=7)
++            access_token = create_access_token(identity=str(user.id), expires_delta=expires)
++            return {'token': access_token}, 200
++        except (UnauthorizedError, DoesNotExist):
++            raise UnauthorizedError
++        except Exception as e:
++            raise InternalServerError
+\ No newline at end of file
