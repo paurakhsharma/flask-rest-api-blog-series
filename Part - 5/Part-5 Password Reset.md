@@ -388,4 +388,6 @@ You can find all the code we have written till now [here](https://github.com/pau
 - How to reset user password
 - How to avoid circular dependancy in flask.
 
+In the next part of the series we are going to learn about testing our Flask REST APIs.
 
+Until then, Happy Coding 😊
